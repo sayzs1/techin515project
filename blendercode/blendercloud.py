@@ -5,8 +5,8 @@ import threading
 import time
 from azure.eventhub import EventHubConsumerClient
 
-CONNECTION_STR = "Endpoint=sb://iothub-ns-515final-59809961-b011f7395d.servicebus.windows.net/;SharedAccessKeyName=iothubowner;SharedAccessKey=clhmjirbSGom9Dq/kBXCu5SjBPj/EMlcTAIoTPFpYZ0=;EntityPath=515final"
-EVENTHUB_NAME = "515final"
+CONNECTION_STR = "key"
+EVENTHUB_NAME = "name"
 
 # Set up logging
 logger = logging.getLogger("EventHubReceiver")

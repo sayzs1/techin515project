@@ -1,48 +1,38 @@
 import sys
 import os
-import json
 import logging
-
-import bpy
+import time
 import numpy as np
-import serial
+import bpy
 
+# Ensure the current directory is in the sys.path
 sys.path.append(os.path.join(bpy.path.abspath("//"), "scripts"))
 
-from blenderport import UARTCommunicator
 
-MCU_PORT_RIGHT_ARM = "COM7"
-MCU_PORT_LEFT_ARM = "COM9"
+from blendercloud import data_table, EventHubReceiver
 
-#FPS = 30        # use 30 if system performance is poor
+CONNECTION_STR = "Endpoint=sb://iothub-ns-515final-59809961-b011f7395d.servicebus.windows.net/;SharedAccessKeyName=iothubowner;SharedAccessKey=clhmjirbSGom9Dq/kBXCu5SjBPj/EMlcTAIoTPFpYZ0=;EntityPath=515final"
+EVENTHUB_NAME = "515final"
 FPS = 60
 
-
-# set up logging
-logger = logging.getLogger("BlenderLogger")
-logger.setLevel(logging.DEBUG)
+# Set up logging
+logger = logging.getLogger("BPY")
+logger.setLevel(logging.INFO)
 
 if not logger.handlers:
-    stream_handler = logging.StreamHandler()
-    stream_handler.setStream(sys.stdout)
-    stream_handler.setLevel(logging.DEBUG)
-    # stream_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s::%(threadName)s]: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    stream_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s]: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    logger.addHandler(stream_handler)
+    ch = logging.StreamHandler()
+    ch.setStream(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s]: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(ch)
 
-
-# get scene armature object
+# Get scene armature object
 armature = bpy.data.objects["Armature"]
 
-# get the bones we need
+# Get the bones we need
 bone_root = armature.pose.bones.get("Root")
 bone_right_upper_arm = armature.pose.bones.get("J_Bip_R_UpperArm")
 bone_right_lower_arm = armature.pose.bones.get("J_Bip_R_LowerArm")
-bone_left_upper_arm = armature.pose.bones.get("J_Bip_L_UpperArm")
-bone_left_lower_arm = armature.pose.bones.get("J_Bip_L_LowerArm")
-
-uart_table_right_arm = blenderport(MCU_PORT_RIGHT_ARM, logging_level=logging.DEBUG)
-uart_table_left_arm = blenderport(MCU_PORT_LEFT_ARM, logging_level=logging.DEBUG)
 
 def setBoneRotation(bone, rotation):
     w, x, y, z = rotation
@@ -58,10 +48,10 @@ def multiply_quaternions(q1, q0):
                      x1 * w0 + y1 * z0 - z1 * y0 + w1 * x0,
                      -x1 * z0 + y1 * w0 + z1 * x0 + w1 * y0,
                      x1 * y0 - y1 * x0 + z1 * w0 + w1 * z0], dtype=np.float64)
-                     
+
 
 class ModalTimerOperator(bpy.types.Operator):
-    # we need these two fields for Blender
+    # We need these two fields for Blender
     bl_idname = "wm.modal_timer_operator"
     bl_label = "Modal Timer Operator"
     
@@ -73,58 +63,42 @@ class ModalTimerOperator(bpy.types.Operator):
             return self.cancel(context)
     
         if event.type == "TIMER":
-            # this will eval true every Timer delay seconds
-            quat_right_upper = uart_table_right_arm.get("/joint/0")
-            quat_right_lower = uart_table_right_arm.get("/joint/1")
-            quat_left_upper = uart_table_left_arm.get('/joint/2')
-            quat_left_lower = uart_table_left_arm.get('/joint/3')
+            # This will eval true every Timer delay seconds
+            quat_right_upper = data_table.get("/joint/0")
+            quat_right_lower = data_table.get("/joint/1")
             
-            if not quat_right_upper or not quat_right_lower or not quat_left_upper or not quat_left_lower:
+            if not quat_right_upper or not quat_right_lower:
                 logger.warning("Invalid joint data")
                 return {"PASS_THROUGH"}
             
-            # convert data to numpy arrays
+            # Convert data to numpy arrays
             quat_right_upper = np.array(quat_right_upper)
             quat_right_lower = np.array(quat_right_lower)
-            quat_left_upper = np.array(quat_left_upper)
-            quat_left_lower = np.array(quat_left_lower)
-                        
+            
             # get inverse transformation of right upper arm
             quat_right_upper_inv = quat_right_upper * np.array([1, -1, -1, -1])
             
             # rotate right lower arm relative to right upper arm
             quat_right_lower_rel = multiply_quaternions(quat_right_upper_inv, quat_right_lower)
 
-            # get inverse transformation of left upper arm
-            quat_left_upper_inv = quat_left_upper * np.array([1, -1, -1, -1])
-            
-            # rotate left lower arm relative to left upper arm
-            quat_left_lower_rel = multiply_quaternions(quat_left_upper_inv, quat_left_lower)
-            
             # apply transformation
             setBoneRotation(bone_right_upper_arm, quat_right_upper)
             setBoneRotation(bone_right_lower_arm, quat_right_lower_rel)
-
-            # if refresh rate is too low, uncomment this line to force Blender to render viewport
-#            bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
     
         return {"PASS_THROUGH"}
 
     def execute(self, context):
-        # update rate is 0.01 second
+        # Update rate is 0.01 second
         self._timer = context.window_manager.event_timer_add(1./FPS, window=context.window)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
         
     def cancel(self, context):
-        uart_table_right_arm.stop()
-        uart_table_left_arm.stop()
+        eventhub_receiver.stop()
         
-        # reset joint position
+        # Reset joint position
         setBoneRotation(bone_right_upper_arm, [1, 0, 0, 0])
         setBoneRotation(bone_right_lower_arm, [1, 0, 0, 0])
-        setBoneRotation(bone_left_upper_arm, [1, 0, 0, 0])
-        setBoneRotation(bone_left_lower_arm, [1, 0, 0, 0])
         context.window_manager.event_timer_remove(self._timer)
         logger.info("BlenderTimer Stopped.")
         return {"CANCELLED"}
@@ -135,15 +109,13 @@ if __name__ == "__main__":
         logger.info("Starting services.")
         bpy.utils.register_class(ModalTimerOperator)
         
-        # uart_table.start()
-        uart_table_right_arm.startThreaded()
-        uart_table_left_arm.startThreaded()
+        eventhub_receiver = EventHubReceiver(CONNECTION_STR, EVENTHUB_NAME)
+        eventhub_receiver.startThreaded()
         
-        # start Blender timer
+        # Start Blender timer
         bpy.ops.wm.modal_timer_operator()
         
         logger.info("All started.")
     except KeyboardInterrupt:
-        uart_table_right_arm.stop()
-        uart_table_left_arm.stop()
+        eventhub_receiver.stop()
         logger.info("Received KeyboardInterrupt, stopped.")

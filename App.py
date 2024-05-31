@@ -1,7 +1,6 @@
 import streamlit as st
 import time
 import pandas as pd
-from datetime import datetime
 import plotly.express as px
 
 # 初始化会话状态变量
@@ -17,7 +16,7 @@ if 'is_paused' not in st.session_state:
     st.session_state.is_paused = False
 
 # 设置页面标题
-st.title("Power BI Report")
+st.title("Data dashboard")
 
 # 说明文字
 st.write("""
